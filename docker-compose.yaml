@@ -1,0 +1,25 @@
+version: '3.8'
+name: server-logs
+services:
+  logs:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    ports:
+      - "${PORT}:${PORT}"
+    env_file:
+      - .env
+    volumes:
+      - logs-data:/opt/app/shared
+    networks:
+      - eco-backend-network
+
+volumes:
+  logs-data:
+    name: eco-portal-logs-data
+    external: true
+
+networks:
+  eco-backend-network:
+    name: eco-backend-network
+    external: true
