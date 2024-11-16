@@ -13,3 +13,5 @@ PASSWORD = os.getenv("SERVER_PASSWORD")
 SHARED_PATH = os.getenv("SHARED_PATH", ".")
 
 BASE_PATH = os.getenv("BASE_PATH", "/internal/server_logs")
+
+JWT_SECRET = os.getenv("JWT_SECRET")
