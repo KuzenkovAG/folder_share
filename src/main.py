@@ -1,10 +1,13 @@
-import base64
+import datetime
 import os
 import logging
 
+import jwt
 from aiohttp import web
 
-from settings import PORT, USERNAME, PASSWORD, SHARED_PATH, BASE_PATH
+from htmls import login_page_html, file_page_html
+from settings import PORT, USERNAME, PASSWORD, SHARED_PATH, BASE_PATH, JWT_SECRET
+from styles import login_page_styles, file_page_style
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -13,106 +16,106 @@ logging.basicConfig(
 logger = logging.getLogger()
 
 
+async def login_page(request):
+    return web.Response(
+        text=login_page_html.format(styles=login_page_styles, base_url=BASE_PATH),
+        content_type="text/html",
+    )
+
+
 async def handle(request):
     logger.info("in handle")
-    auth_header = request.headers.get("Authorization")
+    token = request.cookies.get("inspected")
 
-    if not auth_header:
-        return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Login Required"'})
+    if not token:
+        raise web.HTTPFound(location=f"{BASE_PATH}/login")
 
-    # Проверка авторизации
-    auth_type, encoded_credentials = auth_header.split(" ", 1)
-    if auth_type.lower() != "basic":
-        return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Login Required"'})
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except (jwt.InvalidTokenError, jwt.ExpiredSignatureError):
+        raise web.HTTPFound(location=f"{BASE_PATH}/login")
 
-    credentials = base64.b64decode(encoded_credentials).decode("utf-8")
-    username, password = credentials.split(":", 1)
+    path = request.match_info.get("path", "")
+    full_path = os.path.join(SHARED_PATH, path)
 
-    if username == USERNAME and password == PASSWORD:
-        path = request.match_info.get("path", "")
-        full_path = os.path.join(SHARED_PATH, path)
+    if os.path.isfile(full_path):
+        # Отображение содержимого файла
+        with open(full_path) as f:
+            file_content = f.read()
 
-        if os.path.isfile(full_path):
-            # Отображение содержимого файла
-            with open(full_path) as f:
-                file_content = f.read()
-            return web.Response(
-                text=f"""
-                <html>
-                <head>
-                    <style id="monica-reading-highlight-style">
-                        .monica-reading-highlight {{
-                            animation: fadeInOut 1.5s ease-in-out;
-                        }}
+        return web.Response(
+            text=file_page_html.format(
+                styles=file_page_style,
+                file_name=os.path.basename(full_path),
+                file_content=file_content,
+                path=path,
+                base_url=BASE_PATH,
+            ),
+            content_type="text/html",
+        )
+    elif os.path.isdir(full_path):
+        # Возврат списка файлов и папок в директории с датой последнего обновления и размером
+        items = sorted([f for f in os.listdir(full_path) if not f.startswith(".")])
 
-                        @keyframes fadeInOut {{
-                            0%, 100% {{ background-color: transparent; }}
-                            30%, 70% {{ background-color: rgba(2, 118, 255, 0.20); }}
-                        }}
+        # Начало таблицы
+        file_info = """
+            <table>
+                <thead>
+                    <tr>
+                        <th>Имя файла</th>
+                        <th>Дата последнего обновления</th>
+                        <th>Размер (байты)</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
 
-                        body {{
-                            display: flex;
-                            flex-direction: column;
-                            min-height: 100vh;
-                            margin: 0;
-                        }}
+        for item in items:
+            item_path = os.path.join(full_path, item)
+            last_modified = os.path.getmtime(item_path)
+            size = os.path.getsize(item_path)
 
-                        .content {{
-                            flex: 1;
-                        }}
+            # Форматирование даты
+            last_modified_date = datetime.datetime.fromtimestamp(last_modified).strftime('%Y-%m-%d %H:%M:%S')
+            file_info += f"""
+                    <tr>
+                        <td><a href="{BASE_PATH}/{os.path.join(path, item)}">{item}</a></td>
+                        <td>{last_modified_date}</td>
+                        <td>{size}</td>
+                    </tr>
+                """
 
-                        footer {{
-                            background-color: #f1f1f1;
-                            text-align: center;
-                            padding: 10px;
-                            position: fixed;
-                            bottom: 0;
-                            width: 100%;
-                            display: flex;
-                            justify-content: center;
-                            gap: 20px; /* расстояние между кнопками */
-                        }}
+        # Закрытие таблицы
+        file_info += """
+            </tbody>
+        </table>
+        """
 
-                        button {{
-                            padding: 10px 20px;
-                            font-size: 16px;
-                        }}
-
-                        a {{
-                            text-decoration: none; /* убрать подчеркивание */
-                        }}
-
-                    </style>
-                    </head>
-                    <body>
-                        <div class="content">
-                            <h1>{os.path.basename(full_path)}</h1>
-                            <pre>{file_content}</pre>
-                        </div>
-                        <footer>
-                            <a href="{BASE_PATH}">
-                                <button>В корневую директорию</button>
-                            </a>
-                            <br>
-                            <a href="{BASE_PATH}/download/{path}" download>
-                                <button>Скачать файл</button>
-                            </a>
-                        </footer>
-                        <deepl-input-controller></deepl-input-controller>
-                    </body>
-                </html>
-                """,
-                content_type="text/html",
-            )
-        elif os.path.isdir(full_path):
-            # Возврат списка файлов и папок в директории
-            items = sorted([f for f in os.listdir(full_path) if not f.startswith(".")])
-            file_links = [f'<a href="{BASE_PATH}/{os.path.join(path, item)}">{item}</a>' for item in items]
-            return web.Response(text="<br>".join(file_links), content_type="text/html")
-        else:
-            return web.Response(status=404, text="File or directory not found.")
+        return web.Response(text=file_info, content_type="text/html")
     else:
-        return web.Response(status=401, text="Invalid credentials.")
+        return web.Response(status=404, text="File or directory not found.")
+
+
+async def handle_login(request):
+    if request.method == 'POST':
+        data = await request.post()
+        username = data.get('username')
+        password = data.get('password')
+        print(username, password)
+        if username == USERNAME and password == PASSWORD:
+            # Генерация JWT токена
+            token = jwt.encode({
+                'sub': username,
+                'exp': datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=24)
+            }, JWT_SECRET, algorithm="HS256")
+
+            response = web.HTTPFound(location=BASE_PATH)
+            response.set_cookie('inspected', token, httponly=True)  # Установка cookie для авторизации
+            return response
+        else:
+            return web.Response(text="Invalid credentials.", status=401)
+
+    return await login_page(request)
 
 
 async def download_file(request):
@@ -126,6 +129,8 @@ async def download_file(request):
 
 async def init_app():
     app = web.Application()
+    app.router.add_get(f"{BASE_PATH}/login", login_page)  # Страница логина
+    app.router.add_post(f"{BASE_PATH}/login", handle_login)  # Обработка логина
     app.router.add_get(f"{BASE_PATH}", handle)
     app.router.add_get(f"{BASE_PATH}/{{path:.*}}", handle)  # Обработка запросов на получение файлов и директорий
     app.router.add_get(f"{BASE_PATH}/download/{{path:.*}}", download_file)  # Обработка скачивания файлов
