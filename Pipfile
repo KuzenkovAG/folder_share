@@ -8,6 +8,7 @@ python-dotenv = "*"
 fastapi = "*"
 uvicorn = "*"
 aiohttp = "*"
+pyjwt = "*"
 
 [dev-packages]
 
